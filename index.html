@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🚀 Janseva: Civic Issue Resolver</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        #map { height: 500px; width: 100%; }
+        body { background-color: #f3ebeb; }
+        .navbar-brand { font-weight: bold; }
+        .card { margin-top: 20px; }
+    </style>
+</head>
+<body>
+
+    <nav class="navbar navbar-dark bg-primary">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="#">Janseva: Report an Issue</a>
+        </div>
+    </nav>
+
+    <div class="container mt-4">
+        <div class="row">
+            <div class="col-md-8">
+                <h3>Issue Heatmap</h3>
+                <div id="map" class="border rounded" ></div>
+            </div>
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-body">
+                        <h5 class="card-title">File a New Complaint</h5>
+                        <form id="complaintForm">
+                            <div class="mb-3">
+                                <label for="description" class="form-label">Description</label>
+                                <textarea class="form-control" id="description" rows="3" required></textarea>
+                            </div>
+                            <div class="mb-3">
+                                <label for="photo" class="form-label">Upload Photo</label>
+                                <input class="form-control" type="file" id="photo" accept="image/*" required>
+                            </div>
+                            <input type="hidden" id="latitude">
+                            <input type="hidden" id="longitude">
+                            <div class="d-grid">
+                                <button type="submit" class="btn btn-success" id="submitBtn">Report Issue</button>
+                            </div>
+                            <div class="alert alert-info mt-2" id="locationStatus">
+                                Getting your location...
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCD-24B04aO6cFngr0ztZ5GH0XB8KQ98-A&callback=initMap" async defer></script>
+    
+    <script>
+        let map;
+        let userMarker;
+        const backendUrl = 'http://localhost:3306/janseva_db'; // Your Spring Boot backend URL
+
+        // 1. Initialize the map
+        function initMap() {
+            const chennai = { lat: 13.0827, lng: 80.2707 };
+            map = new google.maps.Map(document.getElementById('map'), {
+                zoom: 12,
+                center: chennai
+            });
+
+            // Get user's current location
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(position => {
+                    const pos = {
+                        lat: position.coords.latitude,
+                        lng: position.coords.longitude
+                    };
+                    document.getElementById('latitude').value = pos.lat;
+                    document.getElementById('longitude').value = pos.lng;
+                    document.getElementById('locationStatus').textContent = '✅ Location found!';
+                    document.getElementById('locationStatus').classList.replace('alert-info', 'alert-success');
+
+                    userMarker = new google.maps.Marker({
+                        position: pos,
+                        map: map,
+                        title: "Your Location"
+                    });
+                    map.setCenter(pos);
+                }, () => {
+                    handleLocationError(true, map.getCenter());
+                });
+            } else {
+                handleLocationError(false, map.getCenter());
+            }
+
+            loadComplaints();
+        }
+
+        function handleLocationError(browserHasGeolocation, pos) {
+             document.getElementById('locationStatus').textContent = browserHasGeolocation ?
+                                    'Error: The Geolocation service failed.' :
+                                    'Error: Your browser does not support geolocation.';
+            document.getElementById('locationStatus').classList.replace('alert-info', 'alert-danger');
+        }
+
+        // 2. Load existing complaints from the backend
+        async function loadComplaints() {
+            try {
+                const response = await fetch(`${backendUrl}/api/complaints`);
+                if (!response.ok) throw new Error('Failed to fetch complaints');
+                const complaints = await response.json();
+
+                complaints.forEach(c => {
+                    const iconColor = getMarkerColor(c.issueType);
+                    const marker = new google.maps.Marker({
+                        position: { lat: c.latitude, lng: c.longitude },
+                        map: map,
+                        title: `Type: ${c.issueType}\nStatus: ${c.status}`,
+                        icon: {
+                            url: `http://maps.google.com/mapfiles/ms/icons/${iconColor}-dot.png`
+                        }
+                    });
+
+                    const infoWindow = new google.maps.InfoWindow({
+                        content: `<h6>${c.issueType.replace('_', ' ')}</h6>
+                                  <p>${c.description}</p>
+                                  <p>Status: <strong>${c.status}</strong></p>
+                                  <img src="${c.photoUrl}" width="150px" alt="Issue Photo"/>`
+                    });
+
+                    marker.addListener('click', () => {
+                        infoWindow.open(map, marker);
+                    });
+                });
+            } catch (error) {
+                console.error('Error loading complaints:', error);
+                alert('Could not load complaints from the server.');
+            }
+        }
+        
+        function getMarkerColor(issueType) {
+            switch(issueType) {
+                case 'POTHOLE': return 'red';
+                case 'GARBAGE_DUMP': return 'green';
+                case 'BROKEN_STREETLIGHT': return 'yellow';
+                case 'WATER_LOGGING': return 'blue';
+                default: return 'purple';
+            }
+        }
+
+        // 3. Handle the form submission
+        document.getElementById('complaintForm').addEventListener('submit', async function(event) {
+            event.preventDefault();
+            const submitBtn = document.getElementById('submitBtn');
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Submitting...';
+
+            const formData = new FormData();
+            formData.append('description', document.getElementById('description').value);
+            formData.append('latitude', document.getElementById('latitude').value);
+            formData.append('longitude', document.getElementById('longitude').value);
+            formData.append('photo', document.getElementById('photo').files[0]);
+
+            try {
+                const response = await fetch(`${backendUrl}/api/complaints`, {
+                    method: 'POST',
+                    body: formData // No Content-Type header needed, browser sets it for FormData
+                });
+
+                if (!response.ok) {
+                    throw new Error(`Server responded with ${response.status}`);
+                }
+
+                alert('Complaint submitted successfully! It will appear on the map shortly.');
+                location.reload(); // Reload to see the new marker
+
+            } catch (error) {
+                console.error('Error submitting complaint:', error);
+                alert('Failed to submit complaint. Please try again.');
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Report Issue';
+            }
+        });
+    </script>
+</body>
+</html>
